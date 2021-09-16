@@ -12,4 +12,4 @@
 * **Mileydy Ninantay Diaz** - [mile1107](https://github.com/mile1107)
 * **Edgar Daniel Ramos Alvarez** - [razerr17](https://github.com/razerr17)
 ---
-⌨️ con ❤️ por Claudiars20](https://github.com/Claudiars20) 😊
+⌨️ con ❤️ por [Claudiars20](https://github.com/Claudiars20) 😊
