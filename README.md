@@ -3,7 +3,7 @@
 - **Escuela Profesional de Ingenieria Informatica y de Sistemas**
 - **Grupo 9**
 #### Docente:
-- **Luis Beltran Palma Ttito** - [Concytec](http://dina.concytec.gob.pe/appDirectorioCTI/VerDatosInvestigador.do;jsessionid=f564431f36070c2b4a0e4a590b74?id_investigador=40930).
+- **Luis Beltran Palma Ttito** - [Concytec](http://dina.concytec.gob.pe/appDirectorioCTI/VerDatosInvestigador.do;jsessionid=0a57f731d8f19e91a96dd3446392?id_investigador=11794).
 
 ## Autores ✒️
 * **Alexander Junior Monzon Montalvo** - [alexojo](https://github.com/alexojo)
