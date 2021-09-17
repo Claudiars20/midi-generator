@@ -7,7 +7,7 @@
 ## Objetivo
 Implementar un prototipo capaz de crear composiciones musicales, basado en redes neuronales LSTM, el cual será de gran ayuda en el proceso creativo de los artistas.
 ## Conjunto de datos
-Piezas musicales monofónicas en formato MIDI.
+Piezas musicales monofónicas de huayno, vals, música clásica en formato MIDI.
 ## Librerias
 * PrettyMIDI
 * Keras
