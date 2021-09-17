@@ -1,100 +1,96 @@
+from genericpath import isdir
 import os, glob, random
 import pretty_midi
 import numpy as np
 from keras.models import model_from_json
 from multiprocessing import Pool as ThreadPool
 
-# Imprimir mensaje
-def log(message):
-	print('[*] {}'.format(message))
 
-# Container para datos MIDI
-def parse_midi(path):
+def leer_MIDI(path):
     midi = None
     try:
-        # Parsing archivo para manejar MIDI
         midi = pretty_midi.PrettyMIDI(path)
-        # Quitar notas invalidas 
         midi.remove_invalid_notes()
     except Exception as e:
-        raise Exception(("%s\nError leyendo audio MIDI.%s" % (e, path)))
+        raise Exception(("%s\nERROR: no se pudo leer el archivo MIDI %s" % (e, path)))
     return midi
 
-# Porcentaje Monofónico
-def porcentaje_monofonico(pm_instrument_roll):
-    mask = pm_instrument_roll.T > 0
-    notas = np.sum(mask, axis=1)
+def crear_directorio_experimento(experiment_path):
+    '''Este método crea el directorio para el nuevo experimento realizado, si la direccion del experimento no existe, la creamos y sus subfolders'''
+    # si el directorio no es el predeterminado y ya existe
+    if experiment_path != 'experimentos/default' and os.path.exists(experiment_path):
+        raise Exception('ERROR: direccion invalida, ya existe '.format(experiment_path))
+    # si el directorio es el predeterminado, creamos un nuevo folder para el experimento
+    if experiment_path == 'experimentos/default':
+        experimentos = os.listdir('experimentos')
+        experimentos = [carpeta for carpeta in experimentos if os.path.isdir(os.path.join('experimentos',carpeta))]
+
+        ultimo_experimento = 0
+        for carpeta in experimentos:
+            try:
+                ultimo_experimento = max(int(carpeta),ultimo_experimento)
+            except ValueError as e:
+                #ignoramos las carpetas no numericas de experimentos
+                pass
+        experiment_path = os.path.join('experimentos',str(ultimo_experimento+1).rjust(2,'0'))
+    
+    os.mkdir(experiment_path)
+    print('CORRECTO: se creo la carpeta para el experimento {}'.format(experiment_path))
+
+    os.mkdir(os.path.join(experiment_path, 'checkpoints'))
+    print('CORRECTO: se creo la carpeta para los puntos de control {}'.format(os.path.join(experiment_path, 'checkpoints')))
+
+    os.mkdir(os.path.join(experiment_path, 'tensorboard-logs'))
+    print('CORRECTO: se creo la carpeta para los mensajes de registro de tensorboard {}'.format(os.path.join(experiment_path, 'tensorboard-logs')))
+    return experiment_path
+
+def obtener_porcentaje_monofonico(instrumento_roll):
+    matriz = instrumento_roll.T > 0
+    notas = np.sum(matriz, axis=1)
     n = np.count_nonzero(notas)
-    haynota = np.count_nonzero(notas == 1)
-    if haynota > 0:
-        return float(haynota) / float(n)
-    elif haynota == 0 and n > 0:
+    single = np.count_nonzero(notas == 1)
+    if single > 0:
+        return float(single) / float(n)
+    elif single == 0 and n > 0:
         return 0.0
-    else: # No hay notas de ningun tipo
+    else: # no hay notas de ningun tipo
         return 0.0
 
-# Filtar audios monofonicos
-def filtrar_monofonicos(pm_instruments, umbral=0.99):
-    # Retornar aquellos audios monofonicos
-    return [i for i in pm_instruments if porcentaje_monofonico(i.get_piano_roll()) >= umbral]
+def filtro_monofonico(pm_instrumentos, porcentaje_monofonico = 0.9):
+    '''Modelamos las melodias que son monofonicas conforme al porcentaje dado'''
+    return [i for i in pm_instrumentos if obtener_porcentaje_monofonico(i.get_piano_roll()) >= porcentaje_monofonico]
 
-# Crear directorio de experimentos
-def experiments_dir(experiment_dir):
-    # Si el directorio del experimento no fue especificado se crea uno númerico
-    if experiment_dir == 'experiments/default':
-    	experiments = os.listdir('experiments')
-    	experiments = [dir_ for dir_ in experiments if os.path.isdir(os.path.join('experiments', dir_))]
-    	exp_reciente = 0
-    	for direct in experiments:
-    		exp_reciente = max(int(direct), exp_reciente)
-        # Crear path
-    	experiment_dir = os.path.join('experiments', str(exp_reciente + 1).rjust(2, '0'))
-    # Experimentos
-    os.mkdir(experiment_dir)
-    log('Se creó directorio para experimentos {}'.format(experiment_dir))
-    # Checkpoints
-    os.mkdir(os.path.join(experiment_dir, 'checkpoints'))
-    log('Se creó directorio para checkpoints{}'.format(os.path.join(experiment_dir, 'checkpoints')))
-    os.mkdir(os.path.join(experiment_dir, 'tensorboard-logs'))
-    return experiment_dir
+# cargamos los datos MIDI de forma diferida
+def generar_datos(MIDI_paths, tamanio_ventana = 20, tamano_bloque = 32, num_hilos=os.cpu_count(), max_archivos_ram=50):
 
-# Cargar data en nucleos
-def generar_data(midi_paths, 
-                       window_size=20, 
-                       batch_size=32,
-                       num_threads=8,
-                       max_files_in_ram=170):
+    if(num_hilos>1):
+        # cargamos los archivos midi para cada hilo
+        pool = ThreadPool(num_hilos) 
 
-    if num_threads > 1:
-    	# Cargar archivos midi en los procesadores (hilos)
-    	pool = ThreadPool(num_threads)
-
-    count = 0
-
-    # Separación de archivos en memoria
+    indice_carga = 0
     while True:
-        load_files = midi_paths[count:count + max_files_in_ram]
+        archivos_a_cargar = MIDI_paths[indice_carga:indice_carga+max_archivos_ram]
+        # actualizamos el indice para seguir cargando los archivos
+        indice_carga = (indice_carga+max_archivos_ram)%len(MIDI_paths)
 
-        i = (i + max_files_in_ram) % len(midi_paths)
-
-        if num_threads > 1:
-       		parsed = pool.map(parse_midi, load_files)
-       	else:
-       		parsed = map(parse_midi, load_files)
-
-        data = _windows_from_monophonic_instruments(parsed, window_size)
-        batch_index = 0
-        while batch_index + batch_size < len(data[0]):      
-            res = (data[0][batch_index: batch_index + batch_size], 
-                   data[1][batch_index: batch_index + batch_size])
+        if num_hilos > 1:
+            MIDI_analizados = pool.map(leer_MIDI, archivos_a_cargar)
+        else:
+            MIDI_analizados = map(leer_MIDI, archivos_a_cargar)
+        datos = obtener_ventanas_instrumentos_monofonicos(MIDI_analizados, tamanio_ventana)
+        indice_bloque = 0
+        while indice_bloque + tamano_bloque < len(datos[0]):
+            res = (datos[0][indice_bloque: indice_bloque + tamano_bloque], 
+                   datos[1][indice_bloque: indice_bloque + tamano_bloque])
             yield res
-            batch_index = batch_index + batch_size
+            indice_bloque = indice_bloque + tamano_bloque
+        # liberamos la memoria
+        del MIDI_analizados 
+        del datos 
 
 def save_model(model, model_dir):
-    # Guarda el modelo en un archivo tipo .json
     with open(os.path.join(model_dir, 'model.json'), 'w') as f:
         f.write(model.to_json())
-
 
 # Cargar modelo desde checkpoint
 def load_model_from_checkpoint(model_dir):
@@ -132,7 +128,7 @@ def load_model_from_checkpoint(model_dir):
     return model, epoch
 
 # Generar
-# seed = semilla -> X
+# seed = semilla
 def generate(model, seeds, window_size, length, num_to_gen, instrument_name):
     
     # Generar archivo pretty midi desde un modelo usando una semilla
@@ -230,53 +226,46 @@ def _network_output_to_midi(windows,
     midi.instruments.append(instrument)
     return midi
 
-# devolvemos X, y las ventanas con datos desde un instrumento monofonico
-
-# pistas en un archivo midi 
-# windows => ventanas
-def _windows_from_monophonic_instruments(midi, window_size):
-    # X y -> arreglos
-    X, y = [], []
-    # para cada nota en midi
-    for m in midi:
-        # Si no es un vacio
+def obtener_ventanas_instrumentos_monofonicos(MIDI, tamanio_ventana):
+    # X conjunto de notas entrada
+    # Y nota salida
+    X, Y = [],[]
+    # para cada nota dentro del archivo midi
+    for m in MIDI:
+        # verificamos si no es una nota vacia
         if m is not None:
-            melody_instruments = filtrar_monofonicos(m.instruments, 0.9)
-            # Para cada instrumento
-            for instrument in melody_instruments:
-                # si la cantidad de notas es mayor al tamaño de la ventana
-                if len(instrument.notes) > window_size:
-                    # 
-                    windows = _encode_sliding_windows(instrument, window_size)
-                    # para cada ventana en las ventanas
-                    for w in windows:
-                        X.append(w[0])
-                        y.append(w[1])
-    return (np.asarray(X), np.asarray(y))
+            pistas_melodicas = filtro_monofonico(m.instruments, 0.9)
+            # ahora para cada pista
+            for pista in pistas_melodicas:
+                # si la cantidad de notas es mayor al tamanio de la ventana
+                if(len(pista.notes) > tamanio_ventana):
+                    # dividimos el conjunto de notas segun el tamanio de nuestra ventana
+                    ventana = codificar_ventana_desplazada(pista, tamanio_ventana)
+                    # para cada una de nuestras ventanas encontradas
+                    for v in ventana:
+                        X.append(v[0])
+                        Y.append(v[1])
+    return (np.asarray(X), np.asarray(Y))
 
-# one-hot codifica una ventana deslizante de notas de un instrumento midi.
-# Este enfoque utiliza el método piano roll, donde cada paso en el deslizamiento
-# ventana representa una unidad de tiempo constante (fs = 4, o 1 seg / 4 = 250ms).
-# Esto nos permite codificar silencios.
-# se espera que pm_instrument sea monofónico.
-def _encode_sliding_windows(pm_instrument, window_size):
-    
-    roll = np.copy(pm_instrument.get_piano_roll(fs=4).T)
+
+
+def codificar_ventana_desplazada(pista, window_size):
+    '''one-hot codifica una ventana deslizante de notas de un instrumento midi.
+    Este enfoque utiliza el método piano roll, donde cada paso en el deslizamiento de
+    ventana representa una unidad de tiempo constante (fs = 4, o 1 seg / 4 = 250ms).
+    Esto nos permite codificar silencios.
+    se espera que la pista sea monofónico.'''
+    roll = np.copy(pista.get_piano_roll(fs=4).T)
 
     # Cortar silencio inicial
-    summed = np.sum(roll, axis=1)
-    mask = (summed > 0).astype(float)
+    suma = np.sum(roll, axis=1)
+    mask = (suma > 0).astype(float)
     roll = roll[np.argmax(mask):]
     
     # Transformar la velocidad de las notas a 1s
     roll = (roll > 0).astype(float)
-    
-    # Porcentaje de eventos que son silencio
-    # s = np.sum(roll, axis=1)
-    # num_silence = len(np.where(s == 0)[0])
-    # print('{}/{} {:.2f} events are rests'.format(num_silence, len(roll), float(num_silence)/float(len(roll))))
 
-    # Agregar caract. 1 a silencio 0 a notas
+    # Agregar caract. 0 a silencio 1 a notas
     rests = np.sum(roll, axis=1)
     rests = (rests != 1).astype(float)
     roll = np.insert(roll, 0, rests, axis=1)
@@ -285,3 +274,17 @@ def _encode_sliding_windows(pm_instrument, window_size):
     for i in range(0, roll.shape[0] - window_size - 1):
         windows.append((roll[i:i + window_size], roll[i + window_size + 1]))
     return windows
+
+
+
+
+
+
+
+
+
+
+
+
+
+
